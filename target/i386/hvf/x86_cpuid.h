@@ -17,11 +17,6 @@
 #ifndef __CPUID_H__
 #define __CPUID_H__
 
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <stdarg.h>
-#include "qemu-common.h"
 #include "x86_flags.h"
 
 struct x86_cpuid {
