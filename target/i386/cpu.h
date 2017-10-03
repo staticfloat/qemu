@@ -32,7 +32,7 @@
 
 #include "exec/cpu-defs.h"
 #if defined(CONFIG_HVF)
-#include "target/i386/hvf-utils/x86.h"
+#include "target/i386/hvf/x86.h"
 #endif
 
 /* The x86 has a strong memory model with some store-after-load re-ordering */
