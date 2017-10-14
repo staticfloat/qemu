@@ -101,6 +101,69 @@ static void aspeed_vic_set_irq(void *opaque, int irq, int level)
     aspeed_vic_update(s);
 }
 
+/* This implements reads from the legacy register space. It is
+ * similar to the new register set, but operates on the lower
+ * 32bits of the registers.
+ */
+static uint32_t aspeed_vic_read_legacy(AspeedVICState *s, hwaddr offset, unsigned size)
+{
+    /* The read returns a 32 bit value, but since we keep the state as
+       64 bit (for the new register space), just truncate at the end */
+    uint64_t val;
+    switch (offset) {
+    case 0x00: /* IRQ status */
+        val = s->raw & ~s->select & s->enable;
+        break;
+    case 0x04: /* FIQ status */
+        val = s->raw & s->select & s->enable;
+        break;
+    case 0x08: /* Raw Interrupt Status */
+        val = s->raw;
+        break;
+    case 0x0C: /* Interrupt Selection */
+        val = s->select;
+        break;
+    case 0x10: /* Interrupt Enable */
+        val = s->enable;
+        break;
+    case 0x18: /* Software Interrupt */
+        val = s->trigger;
+        break;
+    case 0x20: /* Protection Enable */
+        val = s->protected ? 0x1 : 0x0;
+        break;
+    case 0x24: /* Interrupt Sensitivity */
+        val = s->sense;
+        break;
+    case 0x28: /* Interrupt Both Edge Trigger Control */
+        val = s->dual_edge;
+        break;
+    case 0x2C: /* Interrupt Event */
+        val = s->event;
+        break;
+    case 0x14: /* Interrupt Enable Clear */
+    case 0x1C: /* Software Interrupt Clear */
+    case 0x38: /* Edge Triggered Interrupt Clear */
+    /* Temporarily disabled, because legacy firmware does too much
+       of this */
+    /*
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Read of write-only register with offset 0x%"
+                      HWADDR_PRIx "\n", __func__, offset);
+    */
+        val = 0;
+        break;
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Bad register at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        val = 0;
+        break;
+    }
+    trace_aspeed_vic_read(offset, size, val);
+    return val;
+}
+
 static uint64_t aspeed_vic_read(void *opaque, hwaddr offset, unsigned size)
 {
     uint64_t val;
@@ -109,9 +172,7 @@ static uint64_t aspeed_vic_read(void *opaque, hwaddr offset, unsigned size)
     AspeedVICState *s = (AspeedVICState *)opaque;
 
     if (offset < AVIC_NEW_BASE_OFFSET) {
-        qemu_log_mask(LOG_UNIMP, "%s: Ignoring read from legacy registers "
-                      "at 0x%" HWADDR_PRIx "[%u]\n", __func__, offset, size);
-        return 0;
+        return aspeed_vic_read_legacy(s, offset, size);
     }
 
     n_offset -= AVIC_NEW_BASE_OFFSET;
@@ -170,6 +231,65 @@ static uint64_t aspeed_vic_read(void *opaque, hwaddr offset, unsigned size)
     return val;
 }
 
+/* This implements write to the legacy register space. It is similar
+ * to the new register set, but operates on the lower 32bits of the
+ * registers.
+ */
+static void aspeed_vic_write_legacy(AspeedVICState *s, hwaddr offset, uint64_t data, unsigned size)
+{
+    trace_aspeed_vic_write(offset, size, data);
+    switch (offset) {
+    case 0x0C: /* Interrupt Select */
+        s->select &= AVIC_H_MASK;
+        s->select |= data;
+        break;
+    case 0x10: /* Interrupt Enable */
+        s->enable |= data;
+        break;
+    case 0x14: /* Interrupt Enable Clear */
+        s->enable &= ~data;
+        break;
+    case 0x18: /* Software Interrupt */
+    case 0x1C: /* Software Interrupt Clear */
+        qemu_log_mask(LOG_UNIMP, "%s: Software interrupts unavailable. "
+              "IRQs requested: 0x%016" PRIx64 "\n", __func__, data);
+        break;
+    case 0x20: /* Protection Enable */
+        qemu_log_mask(LOG_UNIMP, "%s: VIC protection mode unavailable.\n",
+              __func__);
+        break;
+    case 0x24: /* Interrupt Sensitivity */
+        s->sense &= AVIC_H_MASK;
+        s->sense |= data;
+        break;
+    case 0x28: /* Interrupt Both Edge Trigger Control */
+        s->dual_edge &= AVIC_H_MASK;
+        s->dual_edge |= data;
+        break;
+    case 0x2C:
+        s->event &= AVIC_H_MASK;
+        s->event |= data;
+        break;
+    case 0x38:
+        s->raw &= ~(data & ~s->sense);
+        break;
+    case 0x00: /* IRQ Status */
+    case 0x04: /* FIQ Status */
+    case 0x08: /* Raw Interrupt Status */
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Write of read-only register with offset 0x%"
+                      HWADDR_PRIx "\n", __func__, offset);
+        break;
+
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Bad register at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        break;
+    }
+    aspeed_vic_update(s);
+}
+
 static void aspeed_vic_write(void *opaque, hwaddr offset, uint64_t data,
                              unsigned size)
 {
@@ -178,15 +298,11 @@ static void aspeed_vic_write(void *opaque, hwaddr offset, uint64_t data,
     AspeedVICState *s = (AspeedVICState *)opaque;
 
     if (offset < AVIC_NEW_BASE_OFFSET) {
-        qemu_log_mask(LOG_UNIMP,
-                      "%s: Ignoring write to legacy registers at 0x%"
-                      HWADDR_PRIx "[%u] <- 0x%" PRIx64 "\n", __func__, offset,
-                      size, data);
-        return;
+        return aspeed_vic_write_legacy(s, offset, data, size);
     }
+    trace_aspeed_vic_write(offset, size, data);
 
     n_offset -= AVIC_NEW_BASE_OFFSET;
-    trace_aspeed_vic_write(offset, size, data);
 
     /* Given we have members using separate enable/clear registers, deposit64()
      * isn't quite the tool for the job. Instead, relocate the incoming bits to

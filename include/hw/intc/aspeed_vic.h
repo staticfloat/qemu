@@ -43,6 +43,9 @@ typedef struct AspeedVICState {
 
     /* 0=low-sensitive/falling-edge, 1=high-sensitive/rising-edge */
     uint64_t event;
+
+    /* When clear, VIC registers are available to user space */
+    bool protected;
 } AspeedVICState;
 
 #endif /* ASPEED_VIC_H */
