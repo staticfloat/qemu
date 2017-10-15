@@ -203,9 +203,11 @@ static void aspeed_soc_init(Object *obj)
 
     }
 
-    object_initialize(&s->ftgmac100, sizeof(s->ftgmac100), TYPE_FTGMAC100);
-    object_property_add_child(obj, "ftgmac100", OBJECT(&s->ftgmac100), NULL);
-    qdev_set_parent_bus(DEVICE(&s->ftgmac100), sysbus_get_default());
+    for (i = 0; i < ASPEED_MACS_NUM; i++) {
+        object_initialize(&s->ftgmac100[i], sizeof(s->ftgmac100[i]), TYPE_FTGMAC100);
+        object_property_add_child(obj, "ftgmac100", OBJECT(&s->ftgmac100[i]), NULL);
+        qdev_set_parent_bus(DEVICE(&s->ftgmac100[i]), sysbus_get_default());
+    }
 
     object_initialize(&s->ibt, sizeof(s->ibt), TYPE_ASPEED_IBT);
     object_property_add_child(obj, "bt", OBJECT(&s->ibt), NULL);
@@ -367,18 +369,23 @@ static void aspeed_soc_realize(DeviceState *dev, Error **errp)
     }
 
     /* Net */
-    qdev_set_nic_properties(DEVICE(&s->ftgmac100), &nd_table[0]);
-    object_property_set_bool(OBJECT(&s->ftgmac100), true, "aspeed", &err);
-    object_property_set_bool(OBJECT(&s->ftgmac100), true, "realized",
-                             &local_err);
-    error_propagate(&err, local_err);
-    if (err) {
-        error_propagate(errp, err);
-        return;
+    for (int i = 0; i < ASPEED_MACS_NUM; ++i) {
+        qdev_set_nic_properties(DEVICE(&s->ftgmac100[i]), &nd_table[i]);
+        object_property_set_bool(OBJECT(&s->ftgmac100[i]), true, "aspeed", &err);
+        object_property_set_bool(OBJECT(&s->ftgmac100[i]), true, "realized",
+                                 &local_err);
+        error_propagate(&err, local_err);
+        if (err) {
+            error_propagate(errp, err);
+            return;
+        }
     }
-    sysbus_mmio_map(SYS_BUS_DEVICE(&s->ftgmac100), 0, ASPEED_SOC_ETH1_BASE);
-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->ftgmac100), 0,
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->ftgmac100[0]), 0, ASPEED_SOC_ETH1_BASE);
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->ftgmac100[1]), 0, ASPEED_SOC_ETH2_BASE);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->ftgmac100[0]), 0,
                        qdev_get_gpio_in(DEVICE(&s->vic), 2));
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->ftgmac100[1]), 0,
+                       qdev_get_gpio_in(DEVICE(&s->vic), 3));
 
     /* iBT */
     object_property_set_bool(OBJECT(&s->ibt), true, "realized", &err);

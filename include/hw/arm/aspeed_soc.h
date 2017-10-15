@@ -27,6 +27,7 @@
 
 #define ASPEED_SPIS_NUM  2
 #define ASPEED_WDTS_NUM  3
+#define ASPEED_MACS_NUM  2
 
 typedef struct AspeedSoCState {
     /*< private >*/
@@ -45,7 +46,7 @@ typedef struct AspeedSoCState {
     AspeedSMCState spi[ASPEED_SPIS_NUM];
     AspeedSDMCState sdmc;
     AspeedWDTState wdt[ASPEED_WDTS_NUM];
-    FTGMAC100State ftgmac100;
+    FTGMAC100State ftgmac100[ASPEED_MACS_NUM];
     AspeedIBTState ibt;
     AspeedAHBCState ahbc;
 } AspeedSoCState;
