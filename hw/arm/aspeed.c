@@ -47,11 +47,26 @@ enum {
     AST2500_EVB,
     ROMULUS_BMC,
     WITHERSPOON_BMC,
+    SUPERMICROX11_BMC
 };
 
 /* Palmetto hardware value: 0x120CE416 */
 #define PALMETTO_BMC_HW_STRAP1 (                                        \
         SCU_AST2400_HW_STRAP_DRAM_SIZE(DRAM_SIZE_256MB) |               \
+        SCU_AST2400_HW_STRAP_DRAM_CONFIG(2 /* DDR3 with CL=6, CWL=5 */) | \
+        SCU_AST2400_HW_STRAP_ACPI_DIS |                                 \
+        SCU_AST2400_HW_STRAP_SET_CLK_SOURCE(AST2400_CLK_48M_IN) |       \
+        SCU_HW_STRAP_VGA_CLASS_CODE |                                   \
+        SCU_HW_STRAP_LPC_RESET_PIN |                                    \
+        SCU_HW_STRAP_SPI_MODE(SCU_HW_STRAP_SPI_M_S_EN) |                \
+        SCU_AST2400_HW_STRAP_SET_CPU_AHB_RATIO(AST2400_CPU_AHB_RATIO_2_1) | \
+        SCU_HW_STRAP_SPI_WIDTH |                                        \
+        SCU_HW_STRAP_VGA_SIZE_SET(VGA_16M_DRAM) |                       \
+        SCU_AST2400_HW_STRAP_BOOT_MODE(AST2400_SPI_BOOT))
+
+/* TODO: Find the actual hardware value */
+#define SUPERMICROX11_BMC_HW_STRAP1 (                                   \
+        SCU_AST2400_HW_STRAP_DRAM_SIZE(DRAM_SIZE_128MB) |               \
         SCU_AST2400_HW_STRAP_DRAM_CONFIG(2 /* DDR3 with CL=6, CWL=5 */) | \
         SCU_AST2400_HW_STRAP_ACPI_DIS |                                 \
         SCU_AST2400_HW_STRAP_SET_CLK_SOURCE(AST2400_CLK_48M_IN) |       \
@@ -124,6 +139,14 @@ static const AspeedBoardConfig aspeed_boards[] = {
         .spi_model = "mx66l1g45g",
         .num_cs    = 2,
         .i2c_init  = witherspoon_bmc_i2c_init,
+    },
+    [SUPERMICROX11_BMC] = {
+        .soc_name  = "ast2400-a1",
+        .hw_strap1 = SUPERMICROX11_BMC_HW_STRAP1,
+        .fmc_model = "mx25l25635e",
+        .spi_model = "mx25l25635e",
+        .num_cs    = 1,
+        .i2c_init  = palmetto_bmc_i2c_init,
     },
 };
 
@@ -421,12 +444,37 @@ static const TypeInfo witherspoon_bmc_type = {
     .class_init = witherspoon_bmc_class_init,
 };
 
+static void supermicrox11_bmc_init(MachineState *machine)
+{
+    aspeed_board_init(machine, &aspeed_boards[SUPERMICROX11_BMC]);
+}
+
+static void supermicrox11_bmc_class_init(ObjectClass *oc, void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    mc->desc = "Supermicro X11 BMC (ARM926EJ-S)";
+    mc->init = supermicrox11_bmc_init;
+    mc->max_cpus = 1;
+    mc->no_sdcard = 1;
+    mc->no_floppy = 1;
+    mc->no_cdrom = 1;
+    mc->no_parallel = 1;
+}
+
+static const TypeInfo supermicrox11_bmc_type = {
+    .name = MACHINE_TYPE_NAME("supermicrox11-bmc"),
+    .parent = TYPE_MACHINE,
+    .class_init = supermicrox11_bmc_class_init,
+};
+
 static void aspeed_machine_init(void)
 {
     type_register_static(&palmetto_bmc_type);
     type_register_static(&ast2500_evb_type);
     type_register_static(&romulus_bmc_type);
     type_register_static(&witherspoon_bmc_type);
+    type_register_static(&supermicrox11_bmc_type);
 }
 
 type_init(aspeed_machine_init)
