@@ -25,6 +25,7 @@
 #define ASPEED_SOC_VUART_BASE       0x00187000
 #define ASPEED_SOC_IOMEM_SIZE       0x00200000
 #define ASPEED_SOC_IOMEM_BASE       0x1E600000
+#define ASPEED_SOC_AHBC_BASE        0x1E600000
 #define ASPEED_SOC_FMC_BASE         0x1E620000
 #define ASPEED_SOC_SPI_BASE         0x1E630000
 #define ASPEED_SOC_SPI2_BASE        0x1E631000
@@ -162,6 +163,10 @@ static void aspeed_soc_init(Object *obj)
     object_property_add_alias(obj, "hw-strap2", OBJECT(&s->scu),
                               "hw-strap2", &error_abort);
 
+    object_initialize(&s->ahbc, sizeof(s->ahbc), TYPE_ASPEED_AHBC);
+    object_property_add_child(obj, "ahbc", OBJECT(&s->ahbc), NULL);
+    qdev_set_parent_bus(DEVICE(&s->ahbc), sysbus_get_default());
+
     object_initialize(&s->adc, sizeof(s->adc), TYPE_ASPEED_ADC);
     object_property_add_child(obj, "adc", OBJECT(&s->adc), NULL);
     qdev_set_parent_bus(DEVICE(&s->adc), sysbus_get_default());
@@ -269,6 +274,14 @@ static void aspeed_soc_realize(DeviceState *dev, Error **errp)
         return;
     }
     sysbus_mmio_map(SYS_BUS_DEVICE(&s->scu), 0, ASPEED_SOC_SCU_BASE);
+
+    /* AHBC */
+    object_property_set_bool(OBJECT(&s->ahbc), true, "realized", &err);
+    if (err) {
+        error_propagate(errp, err);
+        return;
+    }
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->ahbc), 0, ASPEED_SOC_AHBC_BASE);
 
     /* ADC */
     object_property_set_bool(OBJECT(&s->adc), true, "realized", &err);

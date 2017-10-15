@@ -223,20 +223,33 @@ static void aspeed_board_init(MachineState *machine,
     /* Install first FMC flash content as a boot rom. */
     if (drive0) {
         AspeedSMCFlash *fl = &bmc->soc.fmc.flashes[0];
-        MemoryRegion *boot_rom = g_new(MemoryRegion, 1);
 
         /*
-         * create a ROM region using the default mapping window size of
-         * the flash module. The window size is 64MB for the AST2400
+         * On the hardware, the start of physical memory can alias the
+         * fmc mmio space. However, qemu does not support executing from
+         * mmio registers. To work around this, we create a ROM region
+         * and copy the contents of the first flash chip there.
+         * We create the ROM region using the default mapping window size
+         * of the flash module. The window size is 64MB for the AST2400
          * SoC and 128MB for the AST2500 SoC, which is twice as big as
          * needed by the flash modules of the Aspeed machines.
          */
-        memory_region_init_rom_nomigrate(boot_rom, OBJECT(bmc), "aspeed.boot_rom",
-                               fl->size, &error_abort);
-        memory_region_add_subregion(get_system_memory(), FIRMWARE_ADDR,
-                                    boot_rom);
+        memory_region_init_rom_nomigrate(&bmc->soc.ahbc.boot_rom,
+            OBJECT(&bmc->soc.ahbc), "aspeed.boot_rom",
+            fl->size, &error_abort);
+        memory_region_add_subregion_overlap(get_system_memory(), FIRMWARE_ADDR,
+                                            &bmc->soc.ahbc.boot_rom, 0);
         write_boot_rom(drive0, FIRMWARE_ADDR, fl->size, &error_abort);
     }
+
+    /* Create the SDRAM alias region. This can later be activated by
+     * the AHB controller */
+    memory_region_init_alias(&bmc->soc.ahbc.sdram_alias, OBJECT(&bmc->soc.ahbc),
+                         "sdram_alias", &bmc->ram, 0,
+                         ram_size);
+    memory_region_add_subregion_overlap(
+        get_system_memory(), 0, &bmc->soc.ahbc.sdram_alias, 0);
+    memory_region_set_enabled(&bmc->soc.ahbc.sdram_alias, 0);
 
     aspeed_board_binfo.kernel_filename = machine->kernel_filename;
     aspeed_board_binfo.initrd_filename = machine->initrd_filename;
