@@ -406,6 +406,7 @@ typedef enum {
     STATE_COLLECTING_DATA,
     STATE_COLLECTING_VAR_LEN_DATA,
     STATE_READING_DATA,
+    STATE_READING_JEDEC,
 } CMDState;
 
 typedef enum {
@@ -1047,7 +1048,7 @@ static void decode_new_cmd(Flash *s, uint32_t value)
 
         s->len = s->pi->id_len;
         s->pos = 0;
-        s->state = STATE_READING_DATA;
+        s->state = STATE_READING_JEDEC;
         break;
 
     case RDCR:
@@ -1248,6 +1249,17 @@ static uint32_t m25p80_transfer8(SSISlave *ss, uint32_t tx)
             if (!s->data_read_loop) {
                 s->state = STATE_IDLE;
             }
+        }
+        break;
+
+    case STATE_READING_JEDEC:
+
+        r = s->data[s->pos];
+        s->pos++;
+        if (s->pos == s->len) {
+            s->pos = 0;
+            // Do not reset the state here. The state
+            // only gets reset once CS is deselected.
         }
         break;
 
