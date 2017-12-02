@@ -26,9 +26,16 @@
 #include "qemu/cutils.h"
 #include "qemu/error-report.h"
 #include <libgen.h>
+#ifdef CONFIG_LINUX
 #include <linux/fs.h>
+#endif
 #ifdef CONFIG_LINUX_MAGIC_H
 #include <linux/magic.h>
+#endif
+#ifdef CONFIG_DARWIN
+// For statfs
+#include <sys/param.h>
+#include <sys/mount.h>
 #endif
 #include <sys/ioctl.h>
 
@@ -64,7 +71,9 @@ int local_open_nofollow(FsContext *fs_ctx, const char *path, int flags,
         assert(*path != '/');
 
         head = g_strdup(path);
-        c = strchrnul(path, '/');
+        c = strchr(path, '/');
+        if (c == NULL)
+            c = strchr(path, '\0');
         if (*c) {
             /* Intermediate path element */
             head[c - path] = 0;
@@ -307,7 +316,7 @@ update_map_file:
     if (credp->fc_gid != -1) {
         gid = credp->fc_gid;
     }
-    if (credp->fc_mode != -1) {
+    if (credp->fc_mode != (mode_t)-1) {
         mode = credp->fc_mode;
     }
     if (credp->fc_rdev != -1) {
@@ -413,7 +422,7 @@ static int local_set_xattrat(int dirfd, const char *path, FsCred *credp)
             return err;
         }
     }
-    if (credp->fc_mode != -1) {
+    if (credp->fc_mode != (mode_t)-1) {
         uint32_t tmp_mode = cpu_to_le32(credp->fc_mode);
         err = fsetxattrat_nofollow(dirfd, path, "user.virtfs.mode", &tmp_mode,
                                    sizeof(mode_t), 0);
@@ -582,10 +591,13 @@ static ssize_t local_preadv(FsContext *ctx, V9fsFidOpenState *fs,
 #else
     int err = lseek(fs->fd, offset, SEEK_SET);
     if (err == -1) {
-        return err;
+        return -errno;
     } else {
-        return readv(fs->fd, iov, iovcnt);
+        err = readv(fs->fd, iov, iovcnt);
+        if (err == -1)
+            return -errno;
     }
+    return err;
 #endif
 }
 
@@ -599,9 +611,11 @@ static ssize_t local_pwritev(FsContext *ctx, V9fsFidOpenState *fs,
 #else
     int err = lseek(fs->fd, offset, SEEK_SET);
     if (err == -1) {
-        return err;
+        return -errno;
     } else {
         ret = writev(fs->fd, iov, iovcnt);
+        if (ret == -1)
+            return -errno;
     }
 #endif
 #ifdef CONFIG_SYNC_FILE_RANGE
@@ -663,6 +677,11 @@ static int local_mknod(FsContext *fs_ctx, V9fsPath *dir_path,
         return -1;
     }
 
+#ifdef CONFIG_DARWIN
+    /* Darwin doesn't have mknodat. For now, error when attempting this */
+    errno = EOPNOTSUPP;
+    return err;
+#else
     if (fs_ctx->export_flags & V9FS_SM_MAPPED ||
         fs_ctx->export_flags & V9FS_SM_MAPPED_FILE) {
         err = mknodat(dirfd, name, fs_ctx->fmode | S_IFREG, 0);
@@ -696,6 +715,7 @@ err_end:
 out:
     close_preserve_errno(dirfd);
     return err;
+#endif
 }
 
 static int local_mkdir(FsContext *fs_ctx, V9fsPath *dir_path,
@@ -773,16 +793,16 @@ static int local_fstat(FsContext *fs_ctx, int fid_type,
         mode_t tmp_mode;
         dev_t tmp_dev;
 
-        if (fgetxattr(fd, "user.virtfs.uid", &tmp_uid, sizeof(uid_t)) > 0) {
+        if (fgetxattr_follow(fd, "user.virtfs.uid", &tmp_uid, sizeof(uid_t)) > 0) {
             stbuf->st_uid = le32_to_cpu(tmp_uid);
         }
-        if (fgetxattr(fd, "user.virtfs.gid", &tmp_gid, sizeof(gid_t)) > 0) {
+        if (fgetxattr_follow(fd, "user.virtfs.gid", &tmp_gid, sizeof(gid_t)) > 0) {
             stbuf->st_gid = le32_to_cpu(tmp_gid);
         }
-        if (fgetxattr(fd, "user.virtfs.mode", &tmp_mode, sizeof(mode_t)) > 0) {
+        if (fgetxattr_follow(fd, "user.virtfs.mode", &tmp_mode, sizeof(mode_t)) > 0) {
             stbuf->st_mode = le32_to_cpu(tmp_mode);
         }
-        if (fgetxattr(fd, "user.virtfs.rdev", &tmp_dev, sizeof(dev_t)) > 0) {
+        if (fgetxattr_follow(fd, "user.virtfs.rdev", &tmp_dev, sizeof(dev_t)) > 0) {
             stbuf->st_rdev = le64_to_cpu(tmp_dev);
         }
     } else if (fs_ctx->export_flags & V9FS_SM_MAPPED_FILE) {
@@ -1367,7 +1387,12 @@ static int local_unlinkat(FsContext *ctx, V9fsPath *dir,
         return -1;
     }
 
-    ret = local_unlinkat_common(ctx, dirfd, name, flags);
+    size_t rflags = 0;
+    if (flags & P9_DOTL_AT_REMOVEDIR) {
+        rflags |= AT_REMOVEDIR;
+    }
+
+    ret = local_unlinkat_common(ctx, dirfd, name, rflags);
     close_preserve_errno(dirfd);
     return ret;
 }

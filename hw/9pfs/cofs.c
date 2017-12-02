@@ -15,6 +15,11 @@
 #include "fsdev/qemu-fsdev.h"
 #include "qemu/thread.h"
 #include "qemu/coroutine.h"
+#ifdef CONFIG_DARWIN
+// For statfs
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
 #include "coth.h"
 
 static ssize_t __readlink(V9fsState *s, V9fsPath *path, V9fsString *buf)

@@ -18,12 +18,21 @@
 #include "qemu/error-report.h"
 #include "qemu/iov.h"
 #include "qemu/sockets.h"
+
+#ifdef CONFIG_DARWIN
+// For statfs
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
+
 #include "virtio-9p.h"
 #include "fsdev/qemu-fsdev.h"
 #include "9p-xattr.h"
 #include "coth.h"
 #include "trace.h"
 #include "migration/blocker.h"
+
+
 
 int open_fd_hw;
 int total_open_fd;
@@ -122,11 +131,18 @@ static int dotl_to_open_flags(int flags)
         { P9_DOTL_NONBLOCK, O_NONBLOCK } ,
         { P9_DOTL_DSYNC, O_DSYNC },
         { P9_DOTL_FASYNC, FASYNC },
+#ifdef CONFIG_LINUX
+        { P9_DOTL_NOATIME, O_NOATIME },
+        /* On Darwin, we could map to F_NOCACHE, which is
+           similar, but doesn't quite have the same
+           semantics. However, we don't support O_DIRECT
+           even on linux at the moment, so we just ignore
+           it here. */
         { P9_DOTL_DIRECT, O_DIRECT },
+#endif
         { P9_DOTL_LARGEFILE, O_LARGEFILE },
         { P9_DOTL_DIRECTORY, O_DIRECTORY },
         { P9_DOTL_NOFOLLOW, O_NOFOLLOW },
-        { P9_DOTL_NOATIME, O_NOATIME },
         { P9_DOTL_SYNC, O_SYNC },
     };
 
@@ -155,10 +171,12 @@ static int get_dotl_openflags(V9fsState *s, int oflags)
      */
     flags = dotl_to_open_flags(oflags);
     flags &= ~(O_NOCTTY | O_ASYNC | O_CREAT);
+#ifdef CONFIG_LINUX
     /*
      * Ignore direct disk access hint until the server supports it.
      */
     flags &= ~O_DIRECT;
+#endif
     return flags;
 }
 
@@ -887,11 +905,13 @@ static void stat_to_v9stat_dotl(V9fsState *s, const struct stat *stbuf,
     v9lstat->st_blksize = stbuf->st_blksize;
     v9lstat->st_blocks = stbuf->st_blocks;
     v9lstat->st_atime_sec = stbuf->st_atime;
-    v9lstat->st_atime_nsec = stbuf->st_atim.tv_nsec;
     v9lstat->st_mtime_sec = stbuf->st_mtime;
-    v9lstat->st_mtime_nsec = stbuf->st_mtim.tv_nsec;
     v9lstat->st_ctime_sec = stbuf->st_ctime;
+#ifdef CONFIG_LINUX
+    v9lstat->st_atime_nsec = stbuf->st_atim.tv_nsec;
+    v9lstat->st_mtime_nsec = stbuf->st_mtim.tv_nsec;
     v9lstat->st_ctime_nsec = stbuf->st_ctim.tv_nsec;
+#endif
     /* Currently we only support BASIC fields in stat */
     v9lstat->st_result_mask = P9_STATS_BASIC;
 
@@ -1301,7 +1321,7 @@ static void coroutine_fn v9fs_walk(void *opaque)
     err = pdu_unmarshal(pdu, offset, "ddw", &fid, &newfid, &nwnames);
     if (err < 0) {
         pdu_complete(pdu, err);
-        return ;
+        return;
     }
     offset += err;
 
@@ -1353,7 +1373,6 @@ static void coroutine_fn v9fs_walk(void *opaque)
             if (err < 0) {
                 goto out;
             }
-
             err = v9fs_co_lstat(pdu, &path, &stbuf);
             if (err < 0) {
                 goto out;
@@ -1772,7 +1791,11 @@ static int coroutine_fn v9fs_do_readdir_with_stat(V9fsPDU *pdu,
         count += len;
         v9fs_stat_free(&v9stat);
         v9fs_path_free(&path);
+#ifdef CONFIG_DARWIN
+        saved_dir_pos = v9fs_co_telldir(pdu, fidp);
+#else
         saved_dir_pos = dent->d_off;
+#endif
     }
 
     v9fs_readdir_unlock(&fidp->fs.dir);
@@ -1923,9 +1946,22 @@ static int coroutine_fn v9fs_do_readdir(V9fsPDU *pdu, V9fsFidState *fidp,
         qid.type = 0;
         qid.version = 0;
 
+#ifdef CONFIG_DARWIN
+        // Darwin has d_seekoff, which appears to function
+        // analogously to d_off. However, it does not appear
+        // to be supported on all file systems, so use
+        // telldir for correctness.
+        off_t off = v9fs_co_telldir(pdu, fidp);
+#endif
+
         /* 11 = 7 + 4 (7 = start offset, 4 = space for storing count) */
         len = pdu_marshal(pdu, 11 + count, "Qqbs",
-                          &qid, dent->d_off,
+                          &qid,
+#ifdef CONFIG_DARWIN
+                          off,
+#else
+                          dent->d_off,
+#endif
                           dent->d_type, &name);
 
         v9fs_readdir_unlock(&fidp->fs.dir);
@@ -1937,7 +1973,11 @@ static int coroutine_fn v9fs_do_readdir(V9fsPDU *pdu, V9fsFidState *fidp,
         }
         count += len;
         v9fs_string_free(&name);
+#ifdef CONFIG_DARWIN
+        saved_dir_pos = off;
+#else
         saved_dir_pos = dent->d_off;
+#endif
     }
 
     v9fs_readdir_unlock(&fidp->fs.dir);
@@ -2927,9 +2967,15 @@ static int v9fs_fill_statfs(V9fsState *s, V9fsPDU *pdu, struct statfs *stbuf)
     f_bavail = stbuf->f_bavail/bsize_factor;
     f_files  = stbuf->f_files;
     f_ffree  = stbuf->f_ffree;
+#ifdef CONFIG_DARWIN
+    fsid_val = (unsigned int) stbuf->f_fsid.val[0] |
+               (unsigned long long)stbuf->f_fsid.val[1] << 32;
+    f_namelen = MAXPATHLEN;
+#else
     fsid_val = (unsigned int) stbuf->f_fsid.__val[0] |
                (unsigned long long)stbuf->f_fsid.__val[1] << 32;
     f_namelen = stbuf->f_namelen;
+#endif
 
     return pdu_marshal(pdu, offset, "ddqqqqqqd",
                        f_type, f_bsize, f_blocks, f_bfree,
@@ -3312,6 +3358,15 @@ static void coroutine_fn v9fs_xattrcreate(void *opaque)
     }
     trace_v9fs_xattrcreate(pdu->tag, pdu->id, fid, name.data, size, flags);
 
+#ifdef CONFIG_DARWIN
+
+    (void)file_fidp;
+    (void)xattr_fidp;
+    err = -EOPNOTSUPP;
+    goto out_nofid;
+
+#else
+
     if (size > XATTR_SIZE_MAX) {
         err = -E2BIG;
         goto out_nofid;
@@ -3340,6 +3395,9 @@ static void coroutine_fn v9fs_xattrcreate(void *opaque)
     err = offset;
 out_put_fid:
     put_fid(pdu, file_fidp);
+#endif
+
+
 out_nofid:
     pdu_complete(pdu, err);
     v9fs_string_free(&name);

@@ -19,6 +19,8 @@
 #ifndef HVF_X86_H
 #define HVF_X86_H 1
 
+#include "qom/cpu.h"
+
 typedef struct x86_register {
     union {
         struct {
